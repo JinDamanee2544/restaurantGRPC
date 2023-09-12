@@ -12,76 +12,119 @@ var packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 
 var restaurantProto = grpc.loadPackageDefinition(packageDefinition);
 
-const { v4: uuidv4 } = require("uuid");
+// read config
+const res = require("dotenv").config({
+    path: "./config.env",
+});
+if (res.error) {
+    throw new Error("Failed to load config");
+} else {
+    console.log("Config loaded");
+}
 
+// mongoose connection
+const mongoose = require("mongoose");
+conn = mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+});
+mongoose.connection.on("connected", () => {
+    console.log("Mongoose is connected");
+});
+
+const Menu = require("../model/Menu");
+
+// Start gRPC Server
 const server = new grpc.Server();
-const menu = [
-    {
-        id: "a68b823c-7ca6-44bc-b721-fb4d5312cafc",
-        name: "Tomyam Gung",
-        price: 500,
-    },
-    {
-        id: "34415c7c-f82d-4e44-88ca-ae2a1aaa92b7",
-        name: "Somtam",
-        price: 60,
-    },
-    {
-        id: "8551887c-f82d-4e44-88ca-ae2a1ccc92b7",
-        name: "Pad-Thai",
-        price: 120,
-    },
-];
 
+// Init gRPC Sevice
 server.addService(restaurantProto.RestaurantService.service, {
-    getAllMenu: (_, callback) => {
-        callback(null, { menu });
+    getAllMenu: async (_, callback) => {
+        try {
+            const menu = await Menu.find();
+            callback(null, { menu });
+        } catch (error) {
+            callback({
+                code: grpc.status.INTERNAL,
+                details: error.message,
+            });
+        }
     },
-    get: (call, callback) => {
-        let menuItem = menu.find((n) => n.id == call.request.id);
-
-        if (menuItem) {
+    get: async (call, callback) => {
+        try {
+            const menuItem = await Menu.findOne({ id: call.request.id });
+            if (menuItem) {
+                callback(null, menuItem);
+            } else {
+                callback({
+                    code: grpc.status.NOT_FOUND,
+                    details: "Not found",
+                });
+            }
+        } catch (error) {
+            callback({
+                code: grpc.status.INTERNAL,
+                details: error.message,
+            });
+        }
+    },
+    insert: async (call, callback) => {
+        try {
+            const menuItem = call.request;
+            const newMenu = new Menu({
+                name: menuItem.name,
+                price: menuItem.price,
+            });
+            await newMenu.save();
             callback(null, menuItem);
-        } else {
+        } catch (error) {
             callback({
-                code: grpc.status.NOT_FOUND,
-                details: "Not found",
+                code: grpc.status.INTERNAL,
+                details: error.message,
             });
         }
     },
-    insert: (call, callback) => {
-        let menuItem = call.request;
-
-        menuItem.id = uuidv4();
-        menu.push(menuItem);
-        callback(null, menuItem);
-    },
-    update: (call, callback) => {
-        let existingMenuItem = menu.find((n) => n.id == call.request.id);
-
-        if (existingMenuItem) {
-            existingMenuItem.name = call.request.name;
-            existingMenuItem.price = call.request.price;
-            callback(null, existingMenuItem);
-        } else {
+    update: async (call, callback) => {
+        try {
+            let existingMenuItem = await Menu.findByIdAndUpdate(
+                call.request.id,
+                {
+                    name: call.request.name,
+                    price: call.request.price,
+                }
+            );
+            if (existingMenuItem) {
+                callback(null, existingMenuItem);
+            } else {
+                callback({
+                    code: grpc.status.NOT_FOUND,
+                    details: "Not found",
+                });
+            }
+        } catch (error) {
             callback({
-                code: grpc.status.NOT_FOUND,
-                details: "Not Found",
+                code: grpc.status.INTERNAL,
+                details: error.message,
             });
         }
     },
-    remove: (call, callback) => {
-        let existingMenuItemIndex = menu.findIndex(
-            (n) => n.id == call.request.id
-        );
-
-        if (existingMenuItemIndex != -1) {
-            menu.splice(existingMenuItemIndex, 1);
-            callback(null, {});
-        } else {
+    remove: async (call, callback) => {
+        try {
+            const existingMenuItem = await Menu.findByIdAndDelete(
+                call.request.id
+            );
+            if (existingMenuItem) {
+                callback(null, existingMenuItem);
+            } else {
+                callback({
+                    code: grpc.status.NOT_FOUND,
+                    details: "Not found",
+                });
+            }
+        } catch (error) {
             callback({
-                code: grpc.status.NOT_FOUND,
-                details: "NOT Found",
+                code: grpc.status.INTERNAL,
+                details: error.message,
             });
         }
     },
